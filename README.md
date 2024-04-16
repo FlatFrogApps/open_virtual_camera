@@ -34,7 +34,7 @@ vcam.exe -h
 
 ### Build Instructions
 * Download and extract [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe). 
-* Move all the contents of the build folder to third_party/opencv-4.9.0"
+* Move all the contents to third_party/opencv
 * Place yourself in the root of the repo and run:
 
 ```Batchfile

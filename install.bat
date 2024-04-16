@@ -25,6 +25,7 @@ goto checkAdmin
 	echo Adding vcam.exe to startup folder
 	mklink "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\vcam.exe" "%~dp0\vcam.exe"
 	if %errorLevel% == 0 (
+		start  %~dp0vcam.exe
 		echo.
 	) else (
 		echo failed adding to on startup
@@ -37,6 +38,5 @@ goto checkAdmin
 	echo.
 
 :end
-	start  %~dp0vcam.exe
 	pause
 

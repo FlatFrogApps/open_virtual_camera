@@ -2,13 +2,12 @@ cmake_minimum_required(VERSION 3.25)
 
 project(open_virtual_camera)
 
-set(THIRDPARTY_DIR "./third_party")
-set(OpenCV_DIR "${THIRDPARTY_DIR}/opencv-4.9.0")
+set(OpenCV_DIR "opencv/build")
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 include_directories(./include)
-include_directories(${THIRDPARTY_DIR})
 include_directories(${OpenCV_DIR})
 include_directories(${OpenCV_DIR}/include)
 include_directories(${OpenCV_DIR}/include/opencv2)
