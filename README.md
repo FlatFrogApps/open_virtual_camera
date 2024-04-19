@@ -10,7 +10,7 @@ The camera to be virtualized can be specified in the camera_name.txt file. If th
 vcam.exe needs to be restarted for the changes to camera_name.txt to take effect.
 
 ### Install
-* Download the latest [release](https://github.com/FFGustaf/open_virtual_camera/releases) and unzip
+* Download the latest [release](https://github.com/FlatFrogApps/open_virtual_camera/releases) and unzip
 * Run install.bat as administrator
 * Choose if you want Open Virtual Camera to start with Windows
 
