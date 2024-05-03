@@ -33,8 +33,7 @@ vcam.exe -h
 * [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe) needs to be dynamically linked
 
 ### Build Instructions
-* Download and extract [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe). 
-* Move all the contents to third_party/opencv
+* Download and extract [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe) to the root of the repo
 * Place yourself in the root of the repo and run:
 
 ```Batchfile
