@@ -1,7 +1,7 @@
 {
-  "name": "open_virtual_camera",
+  "name": "open-virtual-camera",
   "version-string": "0.0.1",
   "dependencies": [
-    "OpenCV"
+    "opencv"
   ]
 }
