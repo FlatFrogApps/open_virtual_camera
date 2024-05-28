@@ -20,8 +20,7 @@ struct Args
     int camera_width;
     int camera_height;
     int camera_fps;
-    std::string camera_fourcc;
-    bool random_noise;
+    bool debug_prints;
 };
 
 Args parse_args(int argc, char** argv)
@@ -32,10 +31,9 @@ Args parse_args(int argc, char** argv)
     parser.add_argument("-cw", "--camera_width").default_value(3840).scan<'i', int>().help("Target camera width.");
     parser.add_argument("-ch", "--camera_height").default_value(2160).scan<'i', int>().help("Target camera height.");
     parser.add_argument("-cf", "--camera_fps").default_value(30).scan<'i', int>().help("Target camera fps.");
-    parser.add_argument("-cfc", "--camera_fourcc").default_value("MJPG").help("FourCC code of camera stream");
-    parser.add_argument("-r", "--random_noise").default_value(false).implicit_value(true).help("No camera feed, just random noise");
     parser.add_argument("--4k").default_value(false).implicit_value(true).help("Request 4k camera resolution");
     parser.add_argument("--fullhd").default_value(false).implicit_value(true).help("Request full HD camera resolution");
+    parser.add_argument("--debug_prints").default_value(false).implicit_value(true).help("Print debug messages");
  
 
     try 
@@ -64,7 +62,6 @@ Args parse_args(int argc, char** argv)
         camera_height = 2160;
     }
 
-
     return Args
     {
         parser.is_used("--camera_device_index"),
@@ -72,8 +69,7 @@ Args parse_args(int argc, char** argv)
         camera_width,
         camera_height,
         parser.get<int>("--camera_fps"),
-        parser.get<std::string>("--camera_fourcc"),
-        parser.get<bool>("random_noise"),
+        parser.get<bool>("--debug_prints")
     };
 }
 
@@ -112,25 +108,23 @@ int main(int argc, char** argv)
 restart:
     cv::VideoCapture cap;
 
-    if (!args.random_noise) {
-        size_t fail_count = 0;
-        bool camera_connected = false;
-        while (!camera_connected) {
-            std::cout << "Trying to capture device " << args.camera_devide_index << " ...     ";
-            cap = cv::VideoCapture(args.camera_devide_index, cv::CAP_MSMF);
-            cap.set(cv::CAP_PROP_FRAME_WIDTH, args.camera_width);
-            cap.set(cv::CAP_PROP_FRAME_HEIGHT, args.camera_height);
-            cap.set(cv::CAP_PROP_FPS, args.camera_fps);
-            cap.set(cv::CAP_PROP_CONVERT_RGB, 0.0);
-            if (cap.isOpened()) {
-                camera_connected = true;
-                std::cout << std::endl << "Successfully captured device "<< args.camera_devide_index << std::endl;
-            } else {
-                fail_count++;
-                std::cout << "Failed " << fail_count << " time(s), make sure its connected, trying again...\r";
-                cap.release();
-                cv::waitKey(2000);
-            }
+    size_t fail_count = 0;
+    bool camera_connected = false;
+    while (!camera_connected) {
+        std::cout << "Trying to capture device " << args.camera_devide_index << " ...     ";
+        cap = cv::VideoCapture(args.camera_devide_index, cv::CAP_MSMF);
+        cap.set(cv::CAP_PROP_FRAME_WIDTH, args.camera_width);
+        cap.set(cv::CAP_PROP_FRAME_HEIGHT, args.camera_height);
+        cap.set(cv::CAP_PROP_FPS, args.camera_fps);
+        cap.set(cv::CAP_PROP_CONVERT_RGB, 0.0);
+        if (cap.isOpened()) {
+            camera_connected = true;
+            std::cout << std::endl << "Successfully captured device "<< args.camera_devide_index << std::endl;
+        } else {
+            fail_count++;
+            std::cout << "Failed " << fail_count << " time(s), make sure its connected, trying again...\r";
+            cap.release();
+            cv::waitKey(2000);
         }
     }
 
@@ -148,39 +142,50 @@ restart:
     bool successful_camera_grab = false;
 
     while (true) {
-        if (args.random_noise) {
-            cv::randu(raw_frame, cv::Scalar(0), cv::Scalar(256));
-        } else {
-            bool read_success = true;
-            int fail_count = 0;
-            do {
+        bool read_success = true;
+        int fail_count = 0;
+        do {
+            try {
                 read_success = cap.read(raw_frame);
-                if (!successful_camera_grab && read_success) {
-                    successful_camera_grab = true;
+            } catch (const std::exception &exc) {
+                cap.release();
+                virtual_output->stop();
+                delete virtual_output;
+                std::cerr << "ERROR: " << exc.what() << std::endl;
+                goto restart;
+            } catch(...) {
+                cap.release();
+                virtual_output->stop();
+                delete virtual_output;
+                std::cerr << "Unknown error reading from camera" << std::endl;
+                goto restart;
+            }
+
+            if (!successful_camera_grab && read_success) {
+                successful_camera_grab = true;
+                if (!args.debug_prints) {
                     FreeConsole();
                 }
+            }
 
-                if (!read_success) {
-                    fail_count++;
-                    std::cout << "Failed reading from camera " << fail_count << " time(s), it is probaby in use by another application, retrying...\r";
-                    cv::waitKey(2000);
-                    if (fail_count > 5) {
-                        std::cout << "Failed reading camera too many times, it is probably in use by another application, recapturing camera..." << std::endl;
-                        cap.release();
-                        virtual_output->stop();
-                        goto restart;
-                    }
+            if (!read_success) {
+                fail_count++;
+                std::cout << "Failed reading from camera " << fail_count << " time(s), it is probaby in use by another application, retrying...\r";
+                cv::waitKey(2000);
+                if (fail_count > 5) {
+                    std::cout << "Failed reading camera too many times, it is probably in use by another application, recapturing camera..." << std::endl;
+                    cap.release();
+                    virtual_output->stop();
+                    delete virtual_output;
+                    goto restart;
                 }
-            } while (!read_success);
-        }
+            }
+        } while (!read_success);
         virtual_output->send(static_cast<uint8_t*>(raw_frame.data));
     }
 
     virtual_output->stop();
-    if(!args.random_noise)
-    {
-        cap.release();
-    }
+    cap.release();
     delete virtual_output;
 
     return 0;
