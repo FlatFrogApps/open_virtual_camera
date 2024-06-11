@@ -31,7 +31,7 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 
 file(GLOB src
      "src/*.c"
-     "src/*.cpp"
+     "src/other.cpp"
 )
 add_executable(vcam ${src})
 target_link_libraries(vcam ${OpenCV_LIBS})
