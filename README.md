@@ -30,10 +30,8 @@ vcam.exe -h
 ## Build 
 ### Build Dependencies
 * [CMake](https://cmake.org/download/) is required to build this project
-* [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe) needs to be dynamically linked
 
 ### Build Instructions
-* Download and extract [OpenCV 4.9.0](https://github.com/opencv/opencv/releases/download/4.9.0/opencv-4.9.0-windows.exe) to the root of the repo
 * Place yourself in the root of the repo and run:
 
 ```Batchfile
