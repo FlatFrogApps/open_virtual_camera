@@ -46,3 +46,5 @@ vcpkg_installed/**
 
 # CMake
 build/**
+
+open_virtual_camera/

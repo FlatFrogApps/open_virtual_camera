@@ -54,7 +54,7 @@ void ErrorDescription(HRESULT hr)
 }
 
 
-void SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 height) {
+bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 height) {
     CComPtr<IMFMediaType> pType;
     DWORD i = 0;
 
@@ -70,7 +70,7 @@ void SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 he
                 HRESULT hr = pReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pType);
                 if (SUCCEEDED(hr)) {
                     std::cout << "Successfully set the resolution to " << width << "x" << height << std::endl;
-                    return;
+                    return true;
                 } else {
                     std::cerr << "Failed to set media type." << std::endl;
                     ErrorDescription(hr);
@@ -83,6 +83,146 @@ void SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 he
     }
 
     std::cerr << "Desired resolution not found." << std::endl;
+    return false;
+}
+
+void CameraLoop(const wchar_t *camera_name, 
+                VirtualOutput &virtual_output, 
+                CComPtr<IMFAttributes> &pAttributes,
+                CComPtr<IMFMediaSource> &pSource,
+                CComPtr<IMFSourceReader> &pReader,
+                IMFActivate** &ppDevices)
+{
+
+    HRESULT hr = pAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
+    if (FAILED(hr)) {
+        std::cerr << "SetGUID failed." << std::endl;
+        ErrorDescription(hr);
+        return;
+    }
+
+    UINT32 count = 0;
+
+    hr = MFEnumDeviceSources(pAttributes, &ppDevices, &count);
+    if (FAILED(hr)) {
+        std::cerr << "MFEnumDeviceSources failed." << std::endl;
+        ErrorDescription(hr);
+        return;
+    }
+
+    if (count == 0) {
+        std::cerr << "No video capture devices found." << std::endl;
+        return;
+    }
+
+    int device_index = -1;
+    for (DWORD i = 0; i < count; i++)
+    {
+        WCHAR* szFriendlyName = NULL;
+        hr = ppDevices[i]->GetAllocatedString(
+            MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+            &szFriendlyName,
+            NULL
+        );
+
+        if (FAILED(hr))
+        {
+            ErrorDescription(hr);
+            return;
+        }
+
+        if (0 == wcscmp(szFriendlyName, camera_name))
+        {
+            device_index = i;
+        }
+        CoTaskMemFree(szFriendlyName);
+    }
+
+    if (device_index >= 0) {
+        std::wcout << "Camera " << camera_name << " identified as device " << device_index << std::endl;
+    }
+    else {
+        device_index = 0;
+        std::wcout << "Camera with name " << camera_name << " specified in file camera_name.txt not found, using device " << device_index << std::endl;
+    }
+
+    hr = ppDevices[device_index]->ActivateObject(IID_PPV_ARGS(&pSource));
+    if (FAILED(hr)) {
+        std::cerr << "ActivateObject failed." << std::endl;
+        ErrorDescription(hr);
+        return;
+    }
+
+    for (UINT32 i = 0; i < count; i++) {
+        SafeRelease(&ppDevices[i]);
+    }
+    CoTaskMemFree(ppDevices);
+
+    hr = MFCreateSourceReaderFromMediaSource(pSource, pAttributes, &pReader);
+    if (FAILED(hr)) {
+        std::cerr << "MFCreateSourceReaderFromMediaSource failed." << std::endl;
+        ErrorDescription(hr);
+        return;
+    }
+
+    if (!SetVideoCaptureResolution(pReader, 3840, 2160)){
+        return;
+    }
+
+    while (true) {
+        DWORD streamIndex, flags;
+        LONGLONG llTimeStamp;
+        CComPtr<IMFSample> pSample;
+        hr = pReader->ReadSample(
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+            0,
+            &streamIndex,
+            &flags,
+            &llTimeStamp,
+            &pSample
+        );
+
+        if (FAILED(hr)) {
+            std::cerr << "ReadSample failed." << std::endl;
+            ErrorDescription(hr);
+            break;
+        }
+
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+            std::cout << "End of stream." << std::endl;
+            break;
+        }
+
+        if (pSample) {
+            CComPtr<IMFMediaBuffer> pBuffer;
+            hr = pSample->ConvertToContiguousBuffer(&pBuffer);
+            if (FAILED(hr)) {
+                std::cerr << "ConvertToContiguousBuffer failed." << std::endl;
+                ErrorDescription(hr);
+                break;
+            }
+
+            BYTE* pData = nullptr;
+            DWORD cbBuffer = 0;
+
+            hr = pBuffer->Lock(&pData, nullptr, &cbBuffer);
+            if (FAILED(hr)) {
+                std::cerr << "Lock failed." << std::endl;
+                ErrorDescription(hr);
+                break;
+            }
+
+            // Process the raw byte stream (pData, cbBuffer)
+            if (cbBuffer > 0) virtual_output.send(static_cast<uint8_t*>(pData));
+
+            hr = pBuffer->Unlock();
+            if (FAILED(hr)) {
+                std::cerr << "Unlock failed." << std::endl;
+                ErrorDescription(hr);
+                break;
+            }
+        }
+    }
 }
 
 void ReadCameraStream(const wchar_t *camera_name)
@@ -94,156 +234,27 @@ void ReadCameraStream(const wchar_t *camera_name)
         CComPtr<IMFAttributes> pAttributes;
         CComPtr<IMFMediaSource> pSource;
         CComPtr<IMFSourceReader> pReader;
-        int device_index = -1;
-        UINT32 count = 0;
         IMFActivate** ppDevices = nullptr;
-
         HRESULT hr = MFCreateAttributes(&pAttributes, 1);
-        if (FAILED(hr)) {
+
+        if (SUCCEEDED(hr)) {
+            try {
+                VirtualOutput virtual_output(3840, 2160, 30);
+                CameraLoop(camera_name, virtual_output, pAttributes, pSource, pReader, ppDevices);
+                virtual_output.stop();
+            } catch (std::runtime_error err) {
+                std::cout << err.what() << std::endl;
+            }
+        } else {
             std::cerr << "MFCreateAttributes failed." << std::endl;
             ErrorDescription(hr);
-            goto done;
         }
-
-        hr = pAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
-        if (FAILED(hr)) {
-            std::cerr << "SetGUID failed." << std::endl;
-            ErrorDescription(hr);
-            goto done;
-        }
-
-
+        UINT32 count = 0;
         hr = MFEnumDeviceSources(pAttributes, &ppDevices, &count);
         if (FAILED(hr)) {
             std::cerr << "MFEnumDeviceSources failed." << std::endl;
             ErrorDescription(hr);
-            goto done;
         }
-
-        if (count == 0) {
-            std::cerr << "No video capture devices found." << std::endl;
-            goto done;
-        }
-
-        VirtualOutput* virtual_output;
-
-        for (DWORD i = 0; i < count; i++)
-        {
-            WCHAR* szFriendlyName = NULL;
-            hr = ppDevices[i]->GetAllocatedString(
-                MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
-                &szFriendlyName,
-                NULL
-            );
-
-            if (FAILED(hr))
-            {
-                ErrorDescription(hr);
-                goto done;
-            }
-
-            if (0 == wcscmp(szFriendlyName, camera_name))
-            {
-                device_index = i;
-            }
-            CoTaskMemFree(szFriendlyName);
-        }
-
-        if (device_index >= 0) {
-            std::wcout << "Camera " << camera_name << " identified as device " << device_index << std::endl;
-        }
-        else {
-            device_index = 0;
-            std::wcout << "Camera with name " << camera_name << " specified in file camera_name.txt not found, using device " << device_index << std::endl;
-        }
-
-        hr = ppDevices[device_index]->ActivateObject(IID_PPV_ARGS(&pSource));
-        if (FAILED(hr)) {
-            std::cerr << "ActivateObject failed." << std::endl;
-            ErrorDescription(hr);
-            goto done;
-        }
-
-        for (UINT32 i = 0; i < count; i++) {
-            ppDevices[i]->Release();
-        }
-        CoTaskMemFree(ppDevices);
-
-        hr = MFCreateSourceReaderFromMediaSource(pSource, pAttributes, &pReader);
-        if (FAILED(hr)) {
-            std::cerr << "MFCreateSourceReaderFromMediaSource failed." << std::endl;
-            ErrorDescription(hr);
-            goto done;
-        }
-
-        try {
-            virtual_output = new VirtualOutput(3840, 2160, 30);
-        }
-        catch (std::runtime_error err) {
-            std::cout << err.what() << std::endl;
-            goto done;
-        }
-
-        SetVideoCaptureResolution(pReader, 3840, 2160);
-
-        while (true) {
-            DWORD streamIndex, flags;
-            LONGLONG llTimeStamp;
-            CComPtr<IMFSample> pSample;
-            hr = pReader->ReadSample(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                0,
-                &streamIndex,
-                &flags,
-                &llTimeStamp,
-                &pSample
-            );
-
-            if (FAILED(hr)) {
-                std::cerr << "ReadSample failed." << std::endl;
-                ErrorDescription(hr);
-                break;
-            }
-
-            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-                std::cout << "End of stream." << std::endl;
-                break;
-            }
-
-            if (pSample) {
-                CComPtr<IMFMediaBuffer> pBuffer;
-                hr = pSample->ConvertToContiguousBuffer(&pBuffer);
-                if (FAILED(hr)) {
-                    std::cerr << "ConvertToContiguousBuffer failed." << std::endl;
-                    ErrorDescription(hr);
-                    break;
-                }
-
-                BYTE* pData = nullptr;
-                DWORD cbBuffer = 0;
-
-                hr = pBuffer->Lock(&pData, nullptr, &cbBuffer);
-                if (FAILED(hr)) {
-                    std::cerr << "Lock failed." << std::endl;
-                    ErrorDescription(hr);
-                    break;
-                }
-
-                // Process the raw byte stream (pData, cbBuffer)
-                if (cbBuffer > 0) virtual_output->send(static_cast<uint8_t*>(pData));
-
-                hr = pBuffer->Unlock();
-                if (FAILED(hr)) {
-                    std::cerr << "Unlock failed." << std::endl;
-                    ErrorDescription(hr);
-                    break;
-                }
-            }
-        }
-
-    done:
-        if (virtual_output) virtual_output->stop();
-        delete virtual_output;
 
         SafeRelease(&pAttributes);
 
@@ -258,8 +269,11 @@ void ReadCameraStream(const wchar_t *camera_name)
     }
 }
 
-int main() 
+int main(int argc, char** argv) 
 {
+    if (argc <= 1) {
+        FreeConsole();
+    }
     wchar_t buffer[MAX_PATH], drive[MAX_PATH] ,directory[MAX_PATH];
     GetModuleFileNameW(NULL, buffer, MAX_PATH); 
     _wsplitpath(buffer, drive, directory, NULL, NULL);
