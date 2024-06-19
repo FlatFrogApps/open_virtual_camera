@@ -10,7 +10,11 @@
 #include <atlbase.h>
 #include <fstream>
 #include "virtual_output.h"
+#include <d3d11.h>
+#include <dxgi1_2.h>
 
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "mf")
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfreadwrite")
@@ -35,6 +39,50 @@ public:
     }
 };
 
+HRESULT ConfigureDXGIManager(CComPtr<IMFDXGIDeviceManager>& dxgiManager) {
+    HRESULT hr = S_OK;
+    UINT resetToken;
+
+    CComPtr<ID3D11Device> d3d11Device;
+    D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0
+    };
+    D3D_FEATURE_LEVEL featureLevel;
+
+    hr = D3D11CreateDevice(
+        nullptr,
+        D3D_DRIVER_TYPE_HARDWARE,
+        nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        featureLevels,
+        ARRAYSIZE(featureLevels),
+        D3D11_SDK_VERSION,
+        &d3d11Device,
+        &featureLevel,
+        nullptr
+    );
+    if (FAILED(hr)) {
+        std::cerr << "D3D11CreateDevice failed." << std::endl;
+        return hr;
+    }
+
+    hr = MFCreateDXGIDeviceManager(&resetToken, &dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "MFCreateDXGIDeviceManager failed." << std::endl;
+        return hr;
+    }
+
+    hr = dxgiManager->ResetDevice(d3d11Device, resetToken);
+    if (FAILED(hr)) {
+        std::cerr << "DXGIManager ResetDevice failed." << std::endl;
+        return hr;
+    }
+
+    return S_OK;
+}
 
 void ErrorDescription(HRESULT hr) 
 { 
@@ -146,6 +194,20 @@ void CameraLoop(const wchar_t *camera_name,
         std::wcout << "Camera with name " << camera_name << " specified in file camera_name.txt not found, using device " << device_index << std::endl;
     }
 
+    CComPtr<IMFDXGIDeviceManager> dxgiManager;
+    hr = ConfigureDXGIManager(dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "ConfigureDXGIManager failed." << std::endl;
+        return;
+    }
+
+    hr = pAttributes->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "SetUnknown for DXGI Manager failed." << std::endl;
+        return;
+    }
+
+
     hr = ppDevices[device_index]->ActivateObject(IID_PPV_ARGS(&pSource));
     if (FAILED(hr)) {
         std::cerr << "ActivateObject failed." << std::endl;
@@ -235,7 +297,7 @@ void ReadCameraStream(const wchar_t *camera_name)
         CComPtr<IMFMediaSource> pSource;
         CComPtr<IMFSourceReader> pReader;
         IMFActivate** ppDevices = nullptr;
-        HRESULT hr = MFCreateAttributes(&pAttributes, 1);
+        HRESULT hr = MFCreateAttributes(&pAttributes, 2);
 
         if (SUCCEEDED(hr)) {
             try {
