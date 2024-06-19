@@ -12,7 +12,6 @@ file(GLOB src
      "src/*.cpp"
 )
 add_executable(vcam ${src})
-target_link_libraries(vcam ${OpenCV_LIBS})
 set_target_properties(vcam PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_CURRENT_LIST_DIR}/release)
 
 file(COPY camera_name.txt DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/Debug)

@@ -10,6 +10,11 @@
 #include <atlbase.h>
 #include <fstream>
 #include "virtual_output.h"
+#include "frozen_image.h"
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 
 #pragma comment(lib, "mf")
 #pragma comment(lib, "mfplat")
@@ -53,6 +58,57 @@ void ErrorDescription(HRESULT hr)
          _tprintf( TEXT("[Could not find a description for error # %#x.]\n"), hr); 
 }
 
+HRESULT ConfigureDXGIManager(CComPtr<IMFDXGIDeviceManager>& dxgiManager) {
+    HRESULT hr = S_OK;
+    UINT resetToken;
+
+    CComPtr<ID3D11Device> d3d11Device;
+    D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0
+    };
+    D3D_FEATURE_LEVEL featureLevel;
+
+    hr = D3D11CreateDevice(
+        nullptr,
+        D3D_DRIVER_TYPE_HARDWARE,
+        nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        featureLevels,
+        ARRAYSIZE(featureLevels),
+        D3D11_SDK_VERSION,
+        &d3d11Device,
+        &featureLevel,
+        nullptr
+    );
+    if (FAILED(hr)) {
+        std::cerr << "D3D11CreateDevice failed." << std::endl;
+        return hr;
+    }
+
+    hr = MFCreateDXGIDeviceManager(&resetToken, &dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "MFCreateDXGIDeviceManager failed." << std::endl;
+        return hr;
+    }
+
+    hr = dxgiManager->ResetDevice(d3d11Device, resetToken);
+    if (FAILED(hr)) {
+        std::cerr << "DXGIManager ResetDevice failed." << std::endl;
+        return hr;
+    }
+
+    return S_OK;
+}
+
+void inverse_faf(long l, char ch4[4]) {
+    ch4[0] = (l & 0xFF000000) >> 24;
+    ch4[1] = (l & 0x00FF0000) >> 16;
+    ch4[2] = (l & 0x0000FF00) >> 8;
+    ch4[3] = (l & 0x000000FF);
+}
 
 bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 height) {
     CComPtr<IMFMediaType> pType;
@@ -61,6 +117,14 @@ bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 he
     while (SUCCEEDED(pReader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i, &pType))) {
         GUID subtype = { 0 };
         pType->GetGUID(MF_MT_SUBTYPE, &subtype);
+
+        UINT32 currentWidth = 0, currentHeight = 0;
+        MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &currentWidth, &currentHeight);
+        //std::cout << subtype.Data1 << "," << subtype.Data2 << "," << subtype.Data3 << "," << subtype.Data4 << " w " << currentWidth << " h " << currentHeight << std::endl;
+
+        char inv[4];
+        inverse_faf(subtype.Data1, inv);
+        //std::cout << inv << " w " << currentWidth << " h " << currentHeight <<  std::endl;
 
         if (subtype == MFVideoFormat_NV12) {
             UINT32 currentWidth = 0, currentHeight = 0;
@@ -146,6 +210,20 @@ void CameraLoop(const wchar_t *camera_name,
         std::wcout << "Camera with name " << camera_name << " specified in file camera_name.txt not found, using device " << device_index << std::endl;
     }
 
+    CComPtr<IMFDXGIDeviceManager> dxgiManager;
+    hr = ConfigureDXGIManager(dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "ConfigureDXGIManager failed." << std::endl;
+        return;
+    }
+
+    hr = pAttributes->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, dxgiManager);
+    if (FAILED(hr)) {
+        std::cerr << "SetUnknown for DXGI Manager failed." << std::endl;
+        return;
+    }
+
+
     hr = ppDevices[device_index]->ActivateObject(IID_PPV_ARGS(&pSource));
     if (FAILED(hr)) {
         std::cerr << "ActivateObject failed." << std::endl;
@@ -168,8 +246,16 @@ void CameraLoop(const wchar_t *camera_name,
     if (!SetVideoCaptureResolution(pReader, 3840, 2160)){
         return;
     }
+    int c = 0;
+
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER start;
+    LARGE_INTEGER end;
+    double interval;
+    QueryPerformanceFrequency(&frequency);
 
     while (true) {
+        QueryPerformanceCounter(&start);
         DWORD streamIndex, flags;
         LONGLONG llTimeStamp;
         CComPtr<IMFSample> pSample;
@@ -214,6 +300,16 @@ void CameraLoop(const wchar_t *camera_name,
 
             // Process the raw byte stream (pData, cbBuffer)
             if (cbBuffer > 0) virtual_output.send(static_cast<uint8_t*>(pData));
+            if (false && c > 100) {
+                std::cout << "unsigned char buffi["<< cbBuffer <<"] = {" << std::endl;
+                for (size_t i = 0; i < cbBuffer - 1; i++) {
+                    std::cout << (int) pData[i] << ",";
+                }
+                std::cout << (int) pData[cbBuffer - 1];
+                std::cout << "}" << std::endl;
+                exit(0);
+            }
+            c++;
 
             hr = pBuffer->Unlock();
             if (FAILED(hr)) {
@@ -221,7 +317,12 @@ void CameraLoop(const wchar_t *camera_name,
                 ErrorDescription(hr);
                 break;
             }
-        }
+
+            QueryPerformanceCounter(&end);
+            interval = (double) (end.QuadPart - start.QuadPart) / frequency.QuadPart;
+
+            printf("%f\n", interval);
+        } 
     }
 }
 
@@ -235,11 +336,15 @@ void ReadCameraStream(const wchar_t *camera_name)
         CComPtr<IMFMediaSource> pSource;
         CComPtr<IMFSourceReader> pReader;
         IMFActivate** ppDevices = nullptr;
-        HRESULT hr = MFCreateAttributes(&pAttributes, 1);
+        HRESULT hr = MFCreateAttributes(&pAttributes, 2);
 
         if (SUCCEEDED(hr)) {
             try {
                 VirtualOutput virtual_output(3840, 2160, 30);
+                while (0) {
+                    virtual_output.send(static_cast<uint8_t*>(buffi));
+                    Sleep(33);
+                }
                 CameraLoop(camera_name, virtual_output, pAttributes, pSource, pReader, ppDevices);
                 virtual_output.stop();
             } catch (std::runtime_error err) {
