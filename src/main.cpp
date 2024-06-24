@@ -9,6 +9,8 @@
 #include <Windows.h>
 #include <atlbase.h>
 #include <fstream>
+#include <set>
+#include <map>
 #include "virtual_output.h"
 
 #pragma comment(lib, "mf")
@@ -54,7 +56,14 @@ void ErrorDescription(HRESULT hr)
 }
 
 
-bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 height) {
+bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32* width, UINT32* height, UINT32* fps) {
+    std::map<UINT32, UINT32> possible_res = {
+        {3840, 2160},
+        {1920, 1080},
+        {1280, 720}
+    };
+    UINT32 highest_res = 0;
+    DWORD highest_res_i = -1;
     CComPtr<IMFMediaType> pType;
     DWORD i = 0;
 
@@ -63,18 +72,16 @@ bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 he
         pType->GetGUID(MF_MT_SUBTYPE, &subtype);
 
         if (subtype == MFVideoFormat_NV12) {
-            UINT32 currentWidth = 0, currentHeight = 0;
+            UINT32 currentWidth = 0, currentHeight = 0, res = 0, pNumerator = 0, pDenominator = 0;
             MFGetAttributeSize(pType, MF_MT_FRAME_SIZE, &currentWidth, &currentHeight);
-
-            if (currentWidth == width && currentHeight == height) {
-                HRESULT hr = pReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pType);
-                if (SUCCEEDED(hr)) {
-                    std::cout << "Successfully set the resolution to " << width << "x" << height << std::endl;
-                    return true;
-                } else {
-                    std::cerr << "Failed to set media type." << std::endl;
-                    ErrorDescription(hr);
-                }
+            MFGetAttributeRatio(pType, MF_MT_FRAME_RATE, &pNumerator, &pDenominator);
+            res = currentWidth * currentHeight * pNumerator / pDenominator;
+            if (res > highest_res && possible_res[currentWidth] == currentHeight) {
+                highest_res = res;
+                highest_res_i = i;
+                *width = currentWidth;
+                *height = currentHeight;
+                *fps = pNumerator / pDenominator;
             }
         }
 
@@ -82,12 +89,22 @@ bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32 width, UINT32 he
         i++;
     }
 
+    if (highest_res_i >= 0 && SUCCEEDED(pReader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, highest_res_i, &pType))) {
+        HRESULT hr = pReader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, pType);
+        if (SUCCEEDED(hr)) {
+            std::cout << "Successfully set the resolution to " << *width << "x" << *height << " with " << *fps << " fps" << std::endl;
+            return true;
+        } else {
+            std::cerr << "Failed to set media type." << std::endl;
+            ErrorDescription(hr);
+        }
+    }
+
     std::cerr << "Desired resolution not found." << std::endl;
     return false;
 }
 
 void CameraLoop(const wchar_t *camera_name, 
-                VirtualOutput &virtual_output, 
                 CComPtr<IMFAttributes> &pAttributes,
                 CComPtr<IMFMediaSource> &pSource,
                 CComPtr<IMFSourceReader> &pReader,
@@ -165,9 +182,15 @@ void CameraLoop(const wchar_t *camera_name,
         return;
     }
 
-    if (!SetVideoCaptureResolution(pReader, 3840, 2160)){
+    UINT32 width;
+    UINT32 height;
+    UINT32 fps;
+
+    if (!SetVideoCaptureResolution(pReader, &width, &height, &fps)){
         return;
     }
+
+    VirtualOutput virtual_output(width, height, fps);
 
     while (true) {
         DWORD streamIndex, flags;
@@ -223,6 +246,7 @@ void CameraLoop(const wchar_t *camera_name,
             }
         }
     }
+    virtual_output.stop();
 }
 
 void ReadCameraStream(const wchar_t *camera_name)
@@ -239,9 +263,7 @@ void ReadCameraStream(const wchar_t *camera_name)
 
         if (SUCCEEDED(hr)) {
             try {
-                VirtualOutput virtual_output(3840, 2160, 30);
-                CameraLoop(camera_name, virtual_output, pAttributes, pSource, pReader, ppDevices);
-                virtual_output.stop();
+                CameraLoop(camera_name, pAttributes, pSource, pReader, ppDevices);
             } catch (std::runtime_error err) {
                 std::cout << err.what() << std::endl;
             }
