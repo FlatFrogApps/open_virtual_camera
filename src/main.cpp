@@ -11,10 +11,10 @@
 #include <fstream>
 #include "virtual_output.h"
 #include <d3d11.h>
-#include <dxgi1_2.h>
+#include <d3d11_4.h>
 
-#pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "d3d11")
+#pragma comment(lib, "dxgi")
 #pragma comment(lib, "mf")
 #pragma comment(lib, "mfplat")
 #pragma comment(lib, "mfreadwrite")
@@ -39,46 +39,46 @@ public:
     }
 };
 
-HRESULT ConfigureDXGIManager(CComPtr<IMFDXGIDeviceManager>& dxgiManager) {
-    HRESULT hr = S_OK;
-    UINT resetToken;
 
-    CComPtr<ID3D11Device> d3d11Device;
-    D3D_FEATURE_LEVEL featureLevels[] = {
-        D3D_FEATURE_LEVEL_11_1,
-        D3D_FEATURE_LEVEL_11_0,
-        D3D_FEATURE_LEVEL_10_1,
-        D3D_FEATURE_LEVEL_10_0
-    };
-    D3D_FEATURE_LEVEL featureLevel;
 
-    hr = D3D11CreateDevice(
-        nullptr,
-        D3D_DRIVER_TYPE_HARDWARE,
-        nullptr,
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-        featureLevels,
-        ARRAYSIZE(featureLevels),
-        D3D11_SDK_VERSION,
-        &d3d11Device,
-        &featureLevel,
-        nullptr
-    );
-    if (FAILED(hr)) {
-        std::cerr << "D3D11CreateDevice failed." << std::endl;
-        return hr;
-    }
+HRESULT ConfigureDXGIManager(CComPtr<IMFDXGIDeviceManager>& D3DMgr) {
+    HRESULT hr;
+    CComPtr<ID3D11Device> D3DDev;
+    UINT mgrRToken;
 
-    hr = MFCreateDXGIDeviceManager(&resetToken, &dxgiManager);
-    if (FAILED(hr)) {
-        std::cerr << "MFCreateDXGIDeviceManager failed." << std::endl;
-        return hr;
-    }
+    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3,  D3D_FEATURE_LEVEL_9_2, D3D_FEATURE_LEVEL_9_1 };
+    if (SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+        levels, sizeof(levels) / sizeof(*levels), D3D11_SDK_VERSION, &D3DDev, NULL, NULL)))
+    {
+        if (FAILED(hr = MFCreateDXGIDeviceManager(&mgrRToken, &D3DMgr))) {
+            std::cerr << "MFCreateDXGIDeviceManager failed." << std::endl;
+            return hr;
+        }
 
-    hr = dxgiManager->ResetDevice(d3d11Device, resetToken);
-    if (FAILED(hr)) {
-        std::cerr << "DXGIManager ResetDevice failed." << std::endl;
-        return hr;
+        // NOTE: Getting ready for multi-threaded operation
+        CComPtr<ID3D11Multithread> D3DDevMT;
+        if (SUCCEEDED(D3DDev->QueryInterface(IID_PPV_ARGS(&D3DDevMT))))
+        {
+            D3DDevMT->SetMultithreadProtected(TRUE);
+            if (SUCCEEDED(D3DMgr->ResetDevice(D3DDev, mgrRToken)))
+            {
+                // Log adapter description
+                CComPtr<IDXGIDevice> dxgiDevice;
+                if (SUCCEEDED(D3DDev->QueryInterface(__uuidof(IDXGIDevice), reinterpret_cast<void**>(&dxgiDevice)))) {
+                    CComPtr<IDXGIAdapter> adapter;
+                    if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+                        DXGI_ADAPTER_DESC desc;
+                        if (SUCCEEDED(adapter->GetDesc(&desc))) {
+                            std::wstring name(desc.Description);
+                            std::wcout << "Using D3D11 video acceleration on GPU device: " << name << std::endl;
+                        }
+                    }
+                }
+                return S_OK;
+            }
+        }
     }
 
     return S_OK;
@@ -200,13 +200,11 @@ void CameraLoop(const wchar_t *camera_name,
         std::cerr << "ConfigureDXGIManager failed." << std::endl;
         return;
     }
-
     hr = pAttributes->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, dxgiManager);
     if (FAILED(hr)) {
         std::cerr << "SetUnknown for DXGI Manager failed." << std::endl;
         return;
     }
-
 
     hr = ppDevices[device_index]->ActivateObject(IID_PPV_ARGS(&pSource));
     if (FAILED(hr)) {
