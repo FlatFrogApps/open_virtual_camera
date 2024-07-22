@@ -56,12 +56,14 @@ void ErrorDescription(HRESULT hr)
 }
 
 
-bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32* width, UINT32* height, UINT32* fps) {
+bool SetVideoCaptureResolution(IMFSourceReader* pReader, UINT32* width, UINT32* height, UINT32* fps, bool four_k) {
     std::map<UINT32, UINT32> possible_res = {
-        {3840, 2160},
         {1920, 1080},
         {1280, 720}
     };
+    if (four_k) {
+        possible_res.emplace(3840, 2160);
+    }
     UINT32 highest_res = 0;
     DWORD highest_res_i = -1;
     CComPtr<IMFMediaType> pType;
@@ -108,7 +110,8 @@ void CameraLoop(const wchar_t *camera_name,
                 CComPtr<IMFAttributes> &pAttributes,
                 CComPtr<IMFMediaSource> &pSource,
                 CComPtr<IMFSourceReader> &pReader,
-                IMFActivate** &ppDevices)
+                IMFActivate** &ppDevices,
+                bool four_k)
 {
 
     HRESULT hr = pAttributes->SetGUID(MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID);
@@ -186,7 +189,7 @@ void CameraLoop(const wchar_t *camera_name,
     UINT32 height;
     UINT32 fps;
 
-    if (!SetVideoCaptureResolution(pReader, &width, &height, &fps)){
+    if (!SetVideoCaptureResolution(pReader, &width, &height, &fps, four_k)){
         return;
     }
 
@@ -249,7 +252,7 @@ void CameraLoop(const wchar_t *camera_name,
     virtual_output.stop();
 }
 
-void ReadCameraStream(const wchar_t *camera_name)
+void ReadCameraStream(const wchar_t *camera_name, bool four_k)
 {
     while (true)
     {
@@ -263,7 +266,7 @@ void ReadCameraStream(const wchar_t *camera_name)
 
         if (SUCCEEDED(hr)) {
             try {
-                CameraLoop(camera_name, pAttributes, pSource, pReader, ppDevices);
+                CameraLoop(camera_name, pAttributes, pSource, pReader, ppDevices, four_k);
             } catch (std::runtime_error err) {
                 std::cout << err.what() << std::endl;
             }
@@ -293,9 +296,14 @@ void ReadCameraStream(const wchar_t *camera_name)
 
 int main(int argc, char** argv) 
 {
-    if (argc <= 1) {
+    bool four_k = true;
+    if (argc < 2 || argv[argc - 1][0] != 'd') {
         FreeConsole();
     }
+    if (argc > 1 && argv[1][0] == '1') {
+        four_k = false;
+    }
+
     wchar_t buffer[MAX_PATH], drive[MAX_PATH] ,directory[MAX_PATH];
     GetModuleFileNameW(NULL, buffer, MAX_PATH); 
     _wsplitpath(buffer, drive, directory, NULL, NULL);
@@ -310,6 +318,6 @@ int main(int argc, char** argv)
     }
     camera_name_file.close();
 
-    ReadCameraStream(camera_name);
+    ReadCameraStream(camera_name, four_k);
     return 0;
 }
