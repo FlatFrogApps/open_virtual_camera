@@ -20,13 +20,6 @@ To fix this just uninstall and install again.
 ### Uninstall
 * Run uninstall.bat as administrator
 
-### Run
-If needed vcam.exe can be run from the command line with parameters.
-More information about these parameters can be found by running
-```Batchfile
-vcam.exe -h
-```
-
 ## Build 
 ### Build Dependencies
 * [CMake](https://cmake.org/download/) is required to build this project
